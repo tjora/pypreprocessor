@@ -13,14 +13,16 @@ import imp
 
 class preprocessor:
     def __init__(self, inFile=sys.argv[0], outFile='',
-                 defines=[], removeMeta=False, escapeChar = '#', mode='Run'):
+                 defines=[], removeMeta=False, escapeChar = '#', commentChar="#", mode='Run', strictDefines=True):
         # public variables
         self.defines = defines
         self.input = inFile
         self.output = outFile
         self.removeMeta = removeMeta
         self.escapeChar = escapeChar
+        self.commentChar = commentChar
         self.mode=mode
+        self.strictDefines = strictDefines
         # private variables
         self.__linenum = 0
         self.__excludeblock = False
@@ -72,7 +74,7 @@ class preprocessor:
                 return False, False
         # handle #define directives
         if line[:7] == self.escapeChar + 'define':
-            if len(line.split()) != 2:
+            if self.strictDefines and len(line.split()) != 2:
                 self.exit_error(self.escapeChar + 'define')
             else:
                 self.define(line.split()[1])
@@ -106,12 +108,20 @@ class preprocessor:
                 self.__ifblocks.append(self.search_defines(line.split()[1]))
                 self.__ifconditions.append(line.split()[1])  
                 return False, True
+        # handle #ifndef directives
+        elif line[:7] == self.escapeChar + 'ifndef':
+            if len(line.split()) != 2:
+                self.exit_error(self.escapeChar + 'ifndef')
+            else:
+                self.__ifblocks.append(not self.search_defines(line.split()[1]))
+                self.__ifconditions.append(line.split()[1])  
+                return False, True
         # handle #else directives
         elif line[:5] == self.escapeChar + 'else':
             if len(line.split()) != 1:
                 self.exit_error(self.escapeChar + 'else')
             else:
-                self.__ifblocks[-1]=not(self.search_defines(self.__ifconditions[-1]))
+                self.__ifblocks[-1]= not self.__ifblocks[-1]
             return False, True                  
         # handle #endif directives
         elif line[:9] == self.escapeChar + 'endifall':
@@ -164,10 +174,14 @@ class preprocessor:
     # parsing/processing
     def parse(self):
         # open the input file
-        input_file = open(os.path.join(self.input),'r')
+        with open(os.path.join(self.input), 'r') as input_file:
+            self.parse_lines(input_file)
+        self.post_process()
+
+    def parse_lines(self, lines):
         try:
             # process the input file
-            for line in input_file:
+            for line in lines:
                 self.__linenum += 1
                 # to squelch or not to squelch
                 squelch, metaData = self.lexer(line)
@@ -176,13 +190,12 @@ class preprocessor:
                     if metaData is True or squelch is True:
                         continue
                 if squelch is True:
-                    self.__outputBuffer += self.escapeChar + line
+                    self.__outputBuffer += self.commentChar + line
                     continue
                 if squelch is False:
                     self.__outputBuffer += line
                     continue
         finally:
-            input_file.close()
             #Warnings for unclosed #ifdef blocks
             if self.__ifblocks:
                 print('Warning: Number of unclosed Ifdefblocks: ',len(self.__ifblocks))
@@ -193,10 +206,8 @@ class preprocessor:
                             cond = ' else '
                         else:
                             cond = ' if '
-                        print('Block:',item, ' is in condition: ',cond )                    
-                    
-                
-        self.post_process()
+                        print('Block:',item, ' is in condition: ',cond )
+        return self.__outputBuffer
 
     # post-processor
     def post_process(self):
